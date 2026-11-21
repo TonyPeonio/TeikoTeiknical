@@ -1,6 +1,7 @@
 import sqlite3
 import pandas as pd
 
+# Creates an SQLite connection and query
 connection = sqlite3.connect("cell-count.db")
 query = """
 SELECT 
@@ -17,12 +18,22 @@ WHERE TRIM(subjects.condition) = 'melanoma'
   AND samples.time_from_treatment_start = 0;
 """
 
+# Reads the query into the baseline_df
 baseline_df = pd.read_sql_query(query, connection)
 connection.close()
 
+# Cleans the columns to allow for exact text matching
 for col in ['project', 'response', 'sex']:
     baseline_df[col] = baseline_df[col].str.strip()
 
+# Iterates through each project and computes the following (in addition to relevant percentages):
+# --total samples
+# --total responders
+# ----male responders
+# ----female responders
+# --total non_responders
+# ----male responders
+# ----female responders
 projects = ['prj1', 'prj2', 'prj3']
 for project in projects:
     print("\n\n", project.upper())
@@ -44,7 +55,8 @@ for project in projects:
     else:
         print("No samples found in this project. No further analysis.")
 
-
+# Creates a new connection to determine melanoma males of all sample and treatment types
+# to find the average b cells for responders at time 0
 connection = sqlite3.connect("cell-count.db")
 query = """
 SELECT 
@@ -60,5 +72,6 @@ WHERE TRIM(subjects.condition) = 'melanoma'
 all_melanoma_df = pd.read_sql_query(query, connection)
 connection.close()
 
+# Prints the average b cells at time 0
 avg_b_cells = all_melanoma_df['avg_b_cells'].iloc[0]
 print(f"Average B Cells: {avg_b_cells:.2f}")
