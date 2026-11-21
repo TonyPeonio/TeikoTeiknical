@@ -1,0 +1,8 @@
+# Exact versions so `make setup` installs the same thing everywhere
+# (your laptop, GitHub Codespaces, the grader).
+pandas==3.0.3
+scipy==1.18.0
+matplotlib==3.11.0
+seaborn==0.13.2
+streamlit==1.58.0
+pytest==9.0.3
