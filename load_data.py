@@ -97,7 +97,7 @@ def build_cell_counts(df, populations):
         pieces.append(piece)
 
     # Stack the per-population pieces on top of each other into one long table.
-    long_df: Never = pd.concat(pieces, ignore_index=True)
+    long_df: pd.DataFrame = pd.concat(pieces, ignore_index=True)
     return long_df[["sample", "population", "count"]]
 
 
