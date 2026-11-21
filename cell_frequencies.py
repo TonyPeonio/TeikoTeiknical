@@ -26,7 +26,7 @@ for index, row in df.iterrows():
 
 summary_df = pd.DataFrame(new_rows)
 
-print(summary_df.head(10).to_string(index=False))
+print(summary_df.head(10).to_string(index=False), "\n\n")
 
 metadata_df = df[['sample', 'condition', 'treatment', 'response', 'sample_type']]
 analysis_df = pd.merge(summary_df, metadata_df, on='sample')
@@ -37,7 +37,7 @@ filtered_df = analysis_df[
     (analysis_df['sample_type'] == 'PBMC')
 ]
 
-print(filtered_df.head(10).to_string(index=False))
+print(filtered_df.head(10).to_string(index=False), "\n\n")
 
 plt.figure(figsize=(10,6))
 sns.boxplot(
@@ -53,5 +53,15 @@ plt.savefig("rel_frequency_cell_pop.png")
 
 populations = ['b_cell', 'cd8_t_cell', 'cd4_t_cell', 'nk_cell', 'monocyte']
 
+print("Analyzed using Welch's t-test")
+
 for pop in populations:
-    responders = filtered_df
+    responders = filtered_df[(filtered_df['population'] == pop) & (filtered_df['response'] == 'yes')]['percentage']
+    non_responders = filtered_df[(filtered_df['population'] == pop) & (filtered_df['response'] == 'no')]['percentage']
+
+    stat, p_value = stats.ttest_ind(responders, non_responders, equal_var=False)
+
+    if p_value < 0.05:
+        print(f"{pop}: Significant difference (p-value = {p_value:4f})")
+    else:
+        print(f"{pop}: No significant difference (p-value = {p_value:4f})")
