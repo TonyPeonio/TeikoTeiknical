@@ -6,7 +6,8 @@ The project loads `cell-count.csv` into a SQLite database, analyses how immune c
 populations relate to miraclib response, and presents the results in an interactive
 Streamlit dashboard.
 
-**Dashboard:** _link to be added after deploying to Streamlit Community Cloud._
+**Dashboard:** https://teikoteiknical-3rx6ntdbbjmbjq26w5nd5g.streamlit.app/
+(hosted on Streamlit Community Cloud; it may take a minute to wake up if it has been idle).
 Locally or in Codespaces, run `make dashboard`; see below. If the dashboard starts
 somewhere `make pipeline` was never run (such as Streamlit Community Cloud), it builds
 `cell-count.db` from `cell-count.csv` on first start.
