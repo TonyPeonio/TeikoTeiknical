@@ -28,7 +28,6 @@ import matplotlib
 matplotlib.use("Agg")  # draw to files only; no window needed (works on servers / Codespaces)
 import matplotlib.pyplot as plt
 import pandas as pd
-import seaborn as sns
 from scipy.stats import mannwhitneyu
 
 from cell_frequencies import get_frequency_table
@@ -143,11 +142,53 @@ def compare_responders(connection, alpha=ALPHA):
     return results
 
 
+GROUPS = [("yes", "Responders", "#1f77b4"), ("no", "Non-responders", "#ff7f0e")]
+
+
+def build_boxplot_figure(per_subject, population_order):
+    """Draw side-by-side boxes (responders vs. non-responders) for each population.
+
+    Matplotlib has no "hue" option, so the boxes are placed by hand: population
+    number i sits at x = i, with responders just left of it and
+    non-responders just right of it.
+    """
+    fig, ax = plt.subplots(figsize=(10, 6))
+    offset = 0.2  # how far each box sits from the population's centre
+
+    for group_number, (response, label, color) in enumerate(GROUPS):
+        # One list of values per population, in the same order as the x-axis.
+        values = []
+        for population in population_order:
+            mask = (per_subject["population"] == population) & (per_subject["response"] == response)
+            values.append(per_subject[mask]["percentage"])
+
+        # Responders at i - 0.2, non-responders at i + 0.2.
+        shift = -offset if group_number == 0 else offset
+        positions = [i + shift for i in range(len(population_order))]
+
+        boxes = ax.boxplot(values, positions=positions, widths=0.35,
+                           patch_artist=True)  # patch_artist=True lets us fill the boxes with color
+        for box in boxes["boxes"]:
+            box.set_facecolor(color)
+        for median_line in boxes["medians"]:
+            median_line.set_color("black")
+        boxes["boxes"][0].set_label(label)  # label one box per group for the legend
+
+    ax.set_xticks(range(len(population_order)))
+    ax.set_xticklabels(population_order)
+    ax.set_title("Relative frequency per subject: responders vs. non-responders\n"
+                 "(melanoma, miraclib, PBMC; each subject's samples averaged)")
+    ax.set_xlabel("Cell population")
+    ax.set_ylabel("Relative frequency (%)")
+    ax.legend()
+    fig.tight_layout()
+    return fig
+
+
 def make_boxplot(connection, path=BOXPLOT_PATH):
     """Save a boxplot of per-subject relative frequencies, responders vs. non-responders."""
     data = get_analysis_data(connection)
     per_subject = average_per_subject(data)
-    # groupby sorts populations alphabetically; plot them in the original order instead.
     population_order = list(data["population"].unique())
 
     # Create the output folder if it doesn't exist yet (e.g. outputs/).
@@ -155,14 +196,7 @@ def make_boxplot(connection, path=BOXPLOT_PATH):
     if folder:
         os.makedirs(folder, exist_ok=True)
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    sns.boxplot(data=per_subject, x="population", y="percentage",
-                order=population_order, hue="response", hue_order=["yes", "no"], ax=ax)
-    ax.set_title("Relative frequency per subject: responders vs. non-responders\n"
-                 "(melanoma, miraclib, PBMC; each subject's samples averaged)")
-    ax.set_xlabel("Cell population")
-    ax.set_ylabel("Relative frequency (%)")
-    fig.tight_layout()
+    fig = build_boxplot_figure(per_subject, population_order)
     fig.savefig(path)
     plt.close(fig)  # free the memory; important if this runs many times
     return per_subject

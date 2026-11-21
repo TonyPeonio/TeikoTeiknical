@@ -6,6 +6,7 @@ cell-count.csv / cell-count.db and can't interfere with each other.
 """
 
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -33,7 +34,7 @@ def write_csv(tmp_path, header, rows, name="cells.csv"):
 
 
 def count_rows(db_path, table):
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
         return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
 
 
@@ -43,7 +44,7 @@ def test_creates_expected_tables(tmp_path):
 
     load_data.load_csv(csv, db)
 
-    with sqlite3.connect(db) as conn:
+    with closing(sqlite3.connect(db)) as conn:
         tables = {r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"projects", "subjects", "samples", "cell_counts"} <= tables
@@ -68,7 +69,7 @@ def test_cell_counts_are_stored_long(tmp_path):
 
     load_data.load_csv(csv, db)
 
-    with sqlite3.connect(db) as conn:
+    with closing(sqlite3.connect(db)) as conn:
         count = conn.execute(
             "SELECT count FROM cell_counts WHERE sample='s2' AND population='nk_cell'"
         ).fetchone()[0]
@@ -96,7 +97,7 @@ def test_new_population_needs_no_schema_change(tmp_path):
 
     load_data.load_csv(csv, db)
 
-    with sqlite3.connect(db) as conn:
+    with closing(sqlite3.connect(db)) as conn:
         pops = {r[0] for r in conn.execute("SELECT DISTINCT population FROM cell_counts")}
     assert "treg" in pops
     assert count_rows(db, "cell_counts") == 3 * 6
@@ -130,7 +131,7 @@ def test_foreign_keys_are_enforced(tmp_path):
     db = tmp_path / "test.db"
     load_data.load_csv(csv, db)
 
-    with sqlite3.connect(db) as conn:
+    with closing(sqlite3.connect(db)) as conn:
         conn.execute("PRAGMA foreign_keys = ON;")
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
