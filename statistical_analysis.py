@@ -1,63 +1,204 @@
 """Part 3: Compare responders vs. non-responders (melanoma, miraclib, PBMC).
 
-Run with:  python statistical_analysis.py   (after load_data.py and cell_frequencies.py)
+Run with:  python statistical_analysis.py   (after python load_data.py)
 
-NOTE: This is the original Part 3 code, moved out of cell_frequencies.py and
-switched to read from the database. The statistical method is reworked (with
-tests) in the next milestone.
+Method, in order:
+  1. Keep only melanoma patients treated with miraclib, PBMC samples.
+  2. Average each subject's samples (days 0, 7, 14) into ONE value per
+     population. Samples from the same person are not independent, so
+     treating them as separate data points would inflate the sample size
+     and make p-values look smaller than they really are (pseudoreplication).
+  3. For each population, a Mann-Whitney U test (two-sided) compares
+     responders vs. non-responders. It compares ranks rather than means, so
+     it does not assume the percentages are normally distributed.
+  4. Five populations means five tests, so the p-values are adjusted with
+     Benjamini-Hochberg to control the false discovery rate. A population
+     is called significant only if its ADJUSTED p-value is < 0.05.
+
+Outputs:
+  - printed results table + plain-English conclusion
+  - outputs/responders_boxplot.png
+  - `responder_comparison` table in the database (for the dashboard)
 """
 
+import os
 import sqlite3
 
+import matplotlib
+matplotlib.use("Agg")  # draw to files only; no window needed (works on servers / Codespaces)
 import matplotlib.pyplot as plt
 import pandas as pd
-import scipy.stats as stats
 import seaborn as sns
+from scipy.stats import mannwhitneyu
+
+from cell_frequencies import get_frequency_table
 
 DB_PATH = "cell-count.db"
+BOXPLOT_PATH = os.path.join("outputs", "responders_boxplot.png")
+ALPHA = 0.05
 
-if __name__ == "__main__":
-    connection = sqlite3.connect(DB_PATH)
-    summary_df = pd.read_sql_query("SELECT * FROM cell_frequencies", connection)
-    metadata_df = pd.read_sql_query(
+
+def get_analysis_data(connection):
+    """Part 2 frequency table + subject info, filtered to melanoma / miraclib / PBMC."""
+    frequencies = get_frequency_table(connection)
+
+    metadata = pd.read_sql_query(
         """
-        SELECT samples.sample, subjects.condition, subjects.treatment,
-               subjects.response, samples.sample_type
+        SELECT samples.sample, samples.subject, samples.sample_type,
+               samples.time_from_treatment_start,
+               subjects.condition, subjects.treatment, subjects.response
         FROM samples
         JOIN subjects ON samples.subject = subjects.subject
         """,
         connection,
     )
-    connection.close()
 
-    populations = list(summary_df["population"].unique())
+    # Attach each sample's metadata to its population rows (like a SQL JOIN on sample).
+    data = pd.merge(frequencies, metadata, on="sample")
 
-    # Merges the summary and metadata dataframes based on sample
-    analysis_df = pd.merge(summary_df, metadata_df, on="sample")
+    # Each condition makes a True/False column; & keeps rows where all are True.
+    keep = (
+        (data["condition"] == "melanoma") &
+        (data["treatment"] == "miraclib") &
+        (data["sample_type"] == "PBMC")
+    )
+    return data[keep].reset_index(drop=True)
 
-    # Filters by condition=melanoma, treatment=miraclib, and sample_type=PBMC
-    filtered_df = analysis_df[
-        (analysis_df["condition"] == "melanoma") &
-        (analysis_df["treatment"] == "miraclib") &
-        (analysis_df["sample_type"] == "PBMC")
-    ]
 
-    # Creates a boxplot to compare cell populations of responders vs non-responders
-    plt.figure(figsize=(10, 6))
-    sns.boxplot(data=filtered_df, x="population", y="percentage", hue="response")
-    plt.title("Relative Frequency of Cell Populations: Responders vs. Non-Responders")
-    plt.ylabel("Relative Frequency (%)")
-    plt.xlabel("Cell Population")
-    plt.savefig("rel_frequency_cell_pop.png")
+def average_per_subject(data):
+    """Collapse each subject's samples into one mean percentage per population."""
+    # Every unique (subject, response, population) combination becomes one row,
+    # holding the mean of that subject's percentages for that population.
+    # (response is constant per subject; grouping by it just keeps the column.)
+    return data.groupby(
+        ["subject", "response", "population"], as_index=False
+    )["percentage"].mean()
 
-    # Uses the Welch's t-test to compare statistical significance of cell populations in responders vs. non-responders
-    print("Analyzed using Welch's t-test")
-    for pop in populations:
-        responders = filtered_df[(filtered_df["population"] == pop) & (filtered_df["response"] == "yes")]["percentage"]
-        non_responders = filtered_df[(filtered_df["population"] == pop) & (filtered_df["response"] == "no")]["percentage"]
-        stat, p_value = stats.ttest_ind(responders, non_responders, equal_var=False)
 
-        if p_value < 0.05:
-            print(f"{pop}: Significant difference (p-value = {p_value:4f})")
-        else:
-            print(f"{pop}: No significant difference (p-value = {p_value:4f})")
+def benjamini_hochberg(p_values):
+    """Return Benjamini-Hochberg adjusted p-values, in the same order as given.
+
+    Steps:
+      1. Sort the p-values from smallest to largest; rank 1 is the smallest.
+      2. adjusted = p * m / rank   (m = number of tests).
+      3. Walk from the largest rank down and never let an adjusted value
+         exceed the one after it. This keeps the adjusted values in the same
+         order as the raw ones, and starting the running minimum at 1.0
+         caps everything at 1.
+    """
+    m = len(p_values)
+    # Positions of the p-values, ordered from smallest p to largest p.
+    order = sorted(range(m), key=lambda i: p_values[i])
+
+    adjusted = [0.0] * m
+    running_min = 1.0
+    for rank in range(m, 0, -1):          # rank = m, m-1, ..., 1
+        i = order[rank - 1]               # position of the p-value with this rank
+        value = p_values[i] * m / rank
+        running_min = min(running_min, value)
+        adjusted[i] = running_min
+    return adjusted
+
+
+def compare_responders(connection, alpha=ALPHA):
+    """Run the responder vs. non-responder comparison for every population.
+
+    Returns one row per population with group sizes (in subjects), medians,
+    the raw and BH-adjusted p-values, and whether the difference is significant.
+    The sample-level p-value (the old, non-independent approach) is included
+    only for comparison.
+    """
+    data = get_analysis_data(connection)
+    per_subject = average_per_subject(data)
+
+    rows = []
+    for population in data["population"].unique():
+        # Subject-level values (one per person) -> used for the real test.
+        subj = per_subject[per_subject["population"] == population]
+        responders = subj[subj["response"] == "yes"]["percentage"]
+        non_responders = subj[subj["response"] == "no"]["percentage"]
+        p_value = mannwhitneyu(responders, non_responders, alternative="two-sided").pvalue
+
+        # Sample-level values (3 per person) -> reported for transparency only.
+        samp = data[data["population"] == population]
+        sample_p = mannwhitneyu(
+            samp[samp["response"] == "yes"]["percentage"],
+            samp[samp["response"] == "no"]["percentage"],
+            alternative="two-sided",
+        ).pvalue
+
+        rows.append({
+            "population": population,
+            "n_responders": len(responders),
+            "n_non_responders": len(non_responders),
+            "responder_median": responders.median(),
+            "non_responder_median": non_responders.median(),
+            "p_value": p_value,
+            "sample_level_p_value": sample_p,
+        })
+
+    results = pd.DataFrame(rows)
+    results["p_adjusted"] = benjamini_hochberg(list(results["p_value"]))
+    results["significant"] = results["p_adjusted"] < alpha
+    return results
+
+
+def make_boxplot(connection, path=BOXPLOT_PATH):
+    """Save a boxplot of per-subject relative frequencies, responders vs. non-responders."""
+    data = get_analysis_data(connection)
+    per_subject = average_per_subject(data)
+    # groupby sorts populations alphabetically; plot them in the original order instead.
+    population_order = list(data["population"].unique())
+
+    # Create the output folder if it doesn't exist yet (e.g. outputs/).
+    folder = os.path.dirname(str(path))
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    sns.boxplot(data=per_subject, x="population", y="percentage",
+                order=population_order, hue="response", hue_order=["yes", "no"], ax=ax)
+    ax.set_title("Relative frequency per subject: responders vs. non-responders\n"
+                 "(melanoma, miraclib, PBMC; each subject's samples averaged)")
+    ax.set_xlabel("Cell population")
+    ax.set_ylabel("Relative frequency (%)")
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)  # free the memory; important if this runs many times
+    return per_subject
+
+
+def describe_results(results, alpha=ALPHA):
+    """Plain-English summary of the comparison."""
+    significant = results[results["significant"]]
+    if len(significant) > 0:
+        names = ", ".join(significant["population"])
+        return (f"Significant after Benjamini-Hochberg correction (adjusted p < {alpha}): {names}.")
+
+    best = results.sort_values("p_value").iloc[0]
+    return (
+        f"No population differs significantly after Benjamini-Hochberg correction "
+        f"(adjusted p < {alpha}). The strongest candidate is {best['population']} "
+        f"(raw p = {best['p_value']:.4f}, adjusted p = {best['p_adjusted']:.4f}), "
+        f"which would need more subjects to confirm."
+    )
+
+
+if __name__ == "__main__":
+    connection = sqlite3.connect(DB_PATH)
+    try:
+        results = compare_responders(connection)
+        make_boxplot(connection)
+        # Save for the dashboard; "replace" so re-running never duplicates rows.
+        results.to_sql("responder_comparison", connection, if_exists="replace", index=False)
+        connection.commit()
+    finally:
+        connection.close()
+
+    print("Part 3: Responders vs. non-responders (melanoma, miraclib, PBMC)")
+    print("Test: Mann-Whitney U on per-subject averages, Benjamini-Hochberg corrected\n")
+    # .4f = 4 digits after the decimal point. (A bare "4f" would mean
+    # "minimum width 4", which is not the same thing.)
+    print(results.to_string(index=False, float_format=lambda x: f"{x:.4f}"))
+    print("\n" + describe_results(results))
+    print(f"\nBoxplot saved to {BOXPLOT_PATH}")
