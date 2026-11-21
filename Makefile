@@ -21,4 +21,4 @@ test:
 # Starts the Streamlit dashboard (dashboard.py is built in the next milestone).
 # --server.address 0.0.0.0 lets Codespaces forward the port to your browser.
 dashboard:
-	$(PYTHON) -m streamlit run dashboard.py --server.address 0.0.0.0 --server.port 8501
+	$(PYTHON) -m streamlit run dashboard.py --server.headless true --server.address 0.0.0.0 --server.port 8501
