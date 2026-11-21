@@ -7,7 +7,9 @@ populations relate to miraclib response, and presents the results in an interact
 Streamlit dashboard.
 
 **Dashboard:** _link to be added after deploying to Streamlit Community Cloud._
-Locally or in Codespaces, run `make dashboard`; see below.
+Locally or in Codespaces, run `make dashboard`; see below. If the dashboard starts
+somewhere `make pipeline` was never run (such as Streamlit Community Cloud), it builds
+`cell-count.db` from `cell-count.csv` on first start.
 
 ---
 
@@ -17,7 +19,7 @@ Locally or in Codespaces, run `make dashboard`; see below.
 make setup       # install pinned dependencies from requirements.txt
 make pipeline    # build cell-count.db and run Parts 1-4 (prints all results)
 make dashboard   # start the dashboard on port 8501
-make test        # optional: run the 32 unit tests
+make test        # optional: run the 34 tests
 ```
 
 After `make dashboard`, Codespaces shows a pop-up offering to open port 8501 in the
@@ -36,7 +38,9 @@ CSV on every run.
 | `cell_frequencies.py` | 2 | Relative frequency of each population per sample, saved to the DB |
 | `statistical_analysis.py` | 3 | Responders vs. non-responders: statistics, boxplot, saved to the DB |
 | `subset_analysis.py` | 4 | Baseline cohort counts and the B-cell average |
-| `dashboard.py` | 2-4 | Streamlit dashboard; reads only from `cell-count.db` |
+| `pipeline.py` | 1-3 | Builds every table the dashboard reads in one call; the dashboard uses it if the DB is missing |
+| `dashboard.py` | 2-4 | Streamlit dashboard; reads from `cell-count.db` |
+| `.streamlit/config.toml` | | Dashboard theme (colors, font) |
 | `tests/` | all | pytest unit tests (synthetic data) and a dashboard smoke test |
 | `Makefile` | | `setup`, `pipeline`, `test`, `dashboard` targets |
 
@@ -51,6 +55,9 @@ Outputs that `make pipeline` generates (git-ignored):
 ---
 
 ## Part 1: Database schema
+
+Column names follow `cell-count.csv`. The task description's "indication" is the CSV's
+`condition` column, and "gender" is `sex`.
 
 ```
 projects ──< subjects ──< samples ──< cell_counts
@@ -139,8 +146,10 @@ For transparency, the output also reports sample-level p-values (every sample tr
 independent). For example, b_cell gives p = 0.056 at sample level vs. 0.35 at subject
 level, which shows how much pseudoreplication can overstate the evidence.
 
-The boxplot (one point per subject) is shown in the dashboard and saved to
-`outputs/responders_boxplot.png`.
+The boxplots (one panel per population, one point per subject) are shown in the
+dashboard and saved to `outputs/responders_boxplot.png`. Each panel has its own y-axis,
+because the populations sit at very different levels. The dashboard also has a toggle to
+plot every sample instead.
 
 ---
 
@@ -169,10 +178,23 @@ types and treatments: **10206.15**
 make test
 ```
 
-- The 31 unit tests run on small synthetic datasets, built so the correct answer is
+- The unit tests run on small synthetic datasets, built so the correct answer is
   known in advance. Examples: a planted responder difference that must be detected;
   a subject with two baseline samples that must be counted once.
+- Another test checks that the dashboard's auto-build creates every table it needs,
+  and doesn't rebuild an existing database.
 - They also cover scaling cases: a new population, a new project, and many subjects.
-- The dashboard smoke test runs the app headlessly against the real database. It is
+- A dashboard smoke test runs the app headlessly against the real database. It is
   skipped if `make pipeline` hasn't been run.
 - `pytest.ini` treats warnings as errors, so a passing run is a clean run.
+
+---
+
+## Deploying the dashboard (Streamlit Community Cloud)
+
+1. Push the repository to GitHub.
+2. At share.streamlit.io, choose **Create app**, select this repository and branch, and
+   set the main file to `dashboard.py`.
+3. Under **Advanced settings**, choose Python 3.12.
+
+The database is built automatically on first start, so no extra steps are needed.

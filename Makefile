@@ -1,6 +1,5 @@
 PYTHON ?= python
 
-# TODO: list every target that isn't a real file
 .PHONY: setup pipeline test dashboard
 
 setup: 

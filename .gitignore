@@ -6,3 +6,6 @@ outputs/
 # Python / pytest caches
 __pycache__/
 .pytest_cache/
+
+# Local editor / assistant settings
+.claude/

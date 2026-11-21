@@ -1,0 +1,15 @@
+# Dashboard theme: warm off-white background, near-black text, coral-red accent.
+[theme]
+base = "light"
+primaryColor = "#FF3534"
+backgroundColor = "#FBFAF8"
+secondaryBackgroundColor = "#F3F2EF"
+textColor = "#111111"
+borderColor = "#E5E5E5"
+baseRadius = "6px"
+# Inter from Google Fonts (falls back to the default sans-serif when offline).
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+
+[browser]
+# Don't send usage statistics to Streamlit.
+gatherUsageStats = false

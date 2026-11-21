@@ -142,45 +142,58 @@ def compare_responders(connection, alpha=ALPHA):
     return results
 
 
-GROUPS = [("yes", "Responders", "#1f77b4"), ("no", "Non-responders", "#ff7f0e")]
+# (response value, legend label, color). Coral red + charcoal, matching the dashboard theme.
+GROUPS = [("yes", "Responders", "#FF3534"), ("no", "Non-responders", "#3A3D4A")]
 
 
-def build_boxplot_figure(per_subject, population_order):
-    """Draw side-by-side boxes (responders vs. non-responders) for each population.
+def build_boxplot_figure(data, population_order, title=None):
+    """One small boxplot panel per population: responders vs. non-responders.
 
-    Matplotlib has no "hue" option, so the boxes are placed by hand: population
-    number i sits at x = i, with responders just left of it and
-    non-responders just right of it.
+    `data` needs the columns population, response and percentage. It can be the
+    per-subject averages (one value per person) or the per-sample rows.
+    Each population gets its own panel and y-axis, because the populations sit
+    at very different levels (B cells ~10%, CD4 T cells ~30%) and a shared
+    axis would squash the small differences we care about.
     """
-    fig, ax = plt.subplots(figsize=(10, 6))
-    offset = 0.2  # how far each box sits from the population's centre
+    n = len(population_order)
+    # sharey=False -> every panel picks its own y-range.
+    fig, axes = plt.subplots(1, n, figsize=(2.6 * n, 4.6), sharey=False)
+    if n == 1:
+        axes = [axes]  # plt.subplots returns a single Axes (not a list) when n == 1
 
-    for group_number, (response, label, color) in enumerate(GROUPS):
-        # One list of values per population, in the same order as the x-axis.
-        values = []
-        for population in population_order:
-            mask = (per_subject["population"] == population) & (per_subject["response"] == response)
-            values.append(per_subject[mask]["percentage"])
+    for ax, population in zip(axes, population_order):
+        values, colors, labels = [], [], []
+        for response, label, color in GROUPS:
+            mask = (data["population"] == population) & (data["response"] == response)
+            values.append(data[mask]["percentage"])
+            colors.append(color)
+            labels.append(label)
 
-        # Responders at i - 0.2, non-responders at i + 0.2.
-        shift = -offset if group_number == 0 else offset
-        positions = [i + shift for i in range(len(population_order))]
-
-        boxes = ax.boxplot(values, positions=positions, widths=0.35,
-                           patch_artist=True)  # patch_artist=True lets us fill the boxes with color
-        for box in boxes["boxes"]:
+        # patch_artist=True draws boxes as filled shapes so they can be colored.
+        boxes = ax.boxplot(values, patch_artist=True, widths=0.6,
+                           medianprops={"color": "white", "linewidth": 2},
+                           flierprops={"marker": "o", "markersize": 3,
+                                       "markerfacecolor": "#9A9A9A", "markeredgecolor": "none"},
+                           whiskerprops={"color": "#6B6B6B"}, capprops={"color": "#6B6B6B"})
+        for box, color in zip(boxes["boxes"], colors):
             box.set_facecolor(color)
-        for median_line in boxes["medians"]:
-            median_line.set_color("black")
-        boxes["boxes"][0].set_label(label)  # label one box per group for the legend
+            box.set_edgecolor(color)
 
-    ax.set_xticks(range(len(population_order)))
-    ax.set_xticklabels(population_order)
-    ax.set_title("Relative frequency per subject: responders vs. non-responders\n"
-                 "(melanoma, miraclib, PBMC; each subject's samples averaged)")
-    ax.set_xlabel("Cell population")
-    ax.set_ylabel("Relative frequency (%)")
-    ax.legend()
+        ax.set_title(population, fontsize=11, fontweight="bold", color="#111111")
+        ax.set_xticks([1, 2])
+        ax.set_xticklabels(["Resp.", "Non-resp."], fontsize=9, color="#6B6B6B")
+        # Clean look: light horizontal grid, no top/right box lines.
+        ax.grid(axis="y", color="#E5E5E5", linewidth=0.8)
+        ax.set_axisbelow(True)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color("#D0D0D0")
+        ax.tick_params(colors="#6B6B6B", labelsize=9)
+
+    axes[0].set_ylabel("Relative frequency (%)", color="#6B6B6B")
+    if title:
+        fig.suptitle(title, fontsize=12, fontweight="bold", color="#111111")
     fig.tight_layout()
     return fig
 
@@ -196,7 +209,10 @@ def make_boxplot(connection, path=BOXPLOT_PATH):
     if folder:
         os.makedirs(folder, exist_ok=True)
 
-    fig = build_boxplot_figure(per_subject, population_order)
+    fig = build_boxplot_figure(
+        per_subject, population_order,
+        title="Relative frequency per subject: responders vs. non-responders "
+              "(melanoma, miraclib, PBMC)")
     fig.savefig(path)
     plt.close(fig)  # free the memory; important if this runs many times
     return per_subject
@@ -218,14 +234,20 @@ def describe_results(results, alpha=ALPHA):
     )
 
 
+def save_comparison(connection):
+    """Run the comparison and store it in the database for the dashboard. Returns the results."""
+    results = compare_responders(connection)
+    # "replace" so re-running never duplicates rows.
+    results.to_sql("responder_comparison", connection, if_exists="replace", index=False)
+    connection.commit()
+    return results
+
+
 if __name__ == "__main__":
     connection = sqlite3.connect(DB_PATH)
     try:
-        results = compare_responders(connection)
+        results = save_comparison(connection)
         make_boxplot(connection)
-        # Save for the dashboard; "replace" so re-running never duplicates rows.
-        results.to_sql("responder_comparison", connection, if_exists="replace", index=False)
-        connection.commit()
     finally:
         connection.close()
 
